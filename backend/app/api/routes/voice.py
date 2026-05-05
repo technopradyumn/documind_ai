@@ -23,17 +23,21 @@ async def voice_status():
 
 @router.post("/stt", response_model=VoiceSTTResponse)
 async def speech_to_text(audio: UploadFile = File(...)):
-    """Convert uploaded audio (WAV/MP3) to transcript text."""
+    """Convert uploaded audio (WAV/WebM/MP3) to transcript text."""
     if not voice_service.capabilities["stt"]:
         raise HTTPException(status_code=503, detail="STT not available on this server.")
     try:
         audio_bytes = await audio.read()
-        transcript = voice_service.speech_to_text(audio_bytes)
+        mime_type = audio.content_type or "audio/webm"
+        transcript = voice_service.speech_to_text(audio_bytes, mime_type=mime_type)
         return VoiceSTTResponse(transcript=transcript)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("Unexpected STT error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
 
 @router.post("/tts")

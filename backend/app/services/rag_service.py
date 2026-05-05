@@ -4,47 +4,69 @@ Handles PDF ingestion, chunking, embedding, and retrieval via Qdrant.
 """
 import logging
 from pathlib import Path
-from typing import Callable
-
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_qdrant import QdrantVectorStore
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-from app.config import get_settings
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 
 class RagService:
+    """Lazy-initialised RAG pipeline. Degrades gracefully if Qdrant is unreachable."""
+
     def __init__(self):
-        self._embeddings = GoogleGenerativeAIEmbeddings(
-            model=settings.gemini_embedding_model,
-            google_api_key=settings.gemini_api_key,
-        )
+        self._embeddings = None
+        self._splitter = None
+
+    def _get_embeddings(self):
+        """Lazy init so the app can start without Qdrant / Google API."""
+        if self._embeddings is not None:
+            return self._embeddings
+        try:
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            from app.config import get_settings
+            settings = get_settings()
+            self._embeddings = GoogleGenerativeAIEmbeddings(
+                model=settings.gemini_embedding_model,
+                google_api_key=settings.gemini_api_key,
+            )
+            logger.info("Embeddings ready (model=%s).", settings.gemini_embedding_model)
+        except Exception as e:
+            logger.error("Failed to init embeddings: %s", e)
+            raise RuntimeError(f"Embedding model init failed: {e}")
+        return self._embeddings
+
+    def _get_splitter(self):
+        if self._splitter is not None:
+            return self._splitter
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
         )
+        return self._splitter
 
     def index_pdf(self, file_path: str, collection_name: str) -> dict:
         """Load → chunk → embed → store in Qdrant. Called by the RQ worker."""
+        from langchain_community.document_loaders import PyPDFLoader
+        from langchain_qdrant import QdrantVectorStore
+        from app.config import get_settings
+        settings = get_settings()
+
         try:
             logger.info("Indexing '%s' → collection '%s'", file_path, collection_name)
-            loader = PyPDFLoader(file_path=file_path)
+            loader = PyPDFLoader(file_path=str(file_path))
             docs = loader.load()
             if not docs:
                 raise ValueError(f"No pages could be loaded from {file_path}. Is it a valid PDF?")
-            
-            chunks = self._splitter.split_documents(docs)
+
+            chunks = self._get_splitter().split_documents(docs)
             logger.info("%d pages → %d chunks", len(docs), len(chunks))
 
             QdrantVectorStore.from_documents(
                 documents=chunks,
-                embedding=self._embeddings,
+                embedding=self._get_embeddings(),
                 url=settings.qdrant_url,
                 collection_name=collection_name,
+                force_recreate=False,
             )
             return {
                 "status": "success",
@@ -58,16 +80,20 @@ class RagService:
 
     def search(self, query: str, collection_name: str, top_k: int = 5) -> str:
         """Retrieve relevant chunks from Qdrant and format for LLM context."""
+        from langchain_qdrant import QdrantVectorStore
+        from app.config import get_settings
+        settings = get_settings()
+
         try:
             vector_db = QdrantVectorStore.from_existing_collection(
                 collection_name=collection_name,
-                embedding=self._embeddings,
+                embedding=self._get_embeddings(),
                 url=settings.qdrant_url,
             )
             results = vector_db.similarity_search(query=query, k=top_k)
         except Exception as e:
             logger.error("Qdrant search error: %s", e)
-            return f"Error searching documents: {e}"
+            return f"No documents indexed yet or search failed: {e}"
 
         if not results:
             return "No relevant content found in the uploaded documents."

@@ -1,5 +1,18 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
+
+
+def _find_env_file() -> str:
+    """Search for .env in CWD and parent directories (up to 2 levels)."""
+    for candidate in [
+        Path(".env"),
+        Path("../.env"),
+        Path(__file__).parent.parent.parent / ".env",  # project root from backend/app/
+    ]:
+        if candidate.exists():
+            return str(candidate)
+    return ".env"  # fallback — let pydantic-settings raise if missing
 
 
 class Settings(BaseSettings):
@@ -18,10 +31,11 @@ class Settings(BaseSettings):
     neo4j_username: str = ""
     neo4j_password: str = ""
 
-    # Models
-    gemini_model_flash: str = "gemini-3.1-flash-lite-preview"
-    gemini_model_pro: str = "gemini-3.1-flash-lite-preview"
-    gemini_embedding_model: str = "text-embedding-004"
+    # Models — use real, stable Gemini model identifiers
+    gemini_model_flash: str = "gemini-2.0-flash"
+    gemini_model_pro: str = "gemini-2.0-flash"
+    # Embedding: models/text-embedding-004 is the stable GA endpoint
+    gemini_embedding_model: str = "models/text-embedding-004"
 
     # App
     qdrant_collection: str = "documind"
@@ -30,7 +44,7 @@ class Settings(BaseSettings):
     max_agent_iterations: int = 10
 
     class Config:
-        env_file = ".env"
+        env_file = _find_env_file()
         extra = "ignore"
 
 

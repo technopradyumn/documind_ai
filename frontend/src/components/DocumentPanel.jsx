@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { uploadDocument, listDocuments, getJobStatus } from '../api/client'
 
@@ -8,7 +8,22 @@ export default function DocumentPanel({ collection, addToast }) {
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress]   = useState(0)
 
-  const onDrop = useCallback(async (accepted) => {
+  // Load existing docs on mount
+  useEffect(() => {
+    listDocuments()
+      .then(({ data }) => {
+        if (data.documents?.length) {
+          setDocs(data.documents.map(name => ({ name, collection: 'documind', pages: '?' })))
+        }
+      })
+      .catch(() => {/* non-fatal */})
+  }, [])
+
+  const onDrop = useCallback(async (accepted, rejected) => {
+    if (rejected?.length) {
+      addToast('Only PDF files are supported. Please upload a .pdf file.', 'error')
+      return
+    }
     const file = accepted[0]
     if (!file) return
     setUploading(true)
@@ -18,43 +33,81 @@ export default function DocumentPanel({ collection, addToast }) {
     form.append('collection', collection)
     try {
       const { data } = await uploadDocument(form, setProgress)
+
+      // If Redis is unavailable, indexing ran synchronously — handle immediately
+      if (data.job_id === 'sync-done') {
+        addToast(`✅ "${file.name}" uploaded and indexed!`, 'success')
+        setDocs(prev => [...prev, { name: file.name, collection, pages: '?' }])
+        return
+      }
+
       addToast(`📄 "${file.name}" uploaded! Indexing started…`, 'success')
       setJobs(prev => [...prev, { job_id: data.job_id, name: file.name, status: 'queued' }])
       pollJob(data.job_id, file.name)
     } catch (e) {
-      addToast('Upload failed: ' + (e.response?.data?.detail || e.message), 'error')
+      const detail = e.response?.data?.detail || e.message || 'Unknown error'
+      addToast(`Upload failed: ${detail}`, 'error')
     } finally {
       setUploading(false)
+      setProgress(0)
     }
   }, [collection])
 
   const pollJob = (jobId, name) => {
+    let attempts = 0
+    const MAX_POLLS = 120 // 5 minutes max (120 × 2.5s)
     const iv = setInterval(async () => {
+      attempts++
+      if (attempts > MAX_POLLS) {
+        clearInterval(iv)
+        addToast(`⚠️ Indexing "${name}" is taking longer than expected. Check server logs.`, 'info')
+        setJobs(prev => prev.map(j => j.job_id === jobId ? { ...j, status: 'timeout' } : j))
+        return
+      }
       try {
         const { data } = await getJobStatus(jobId)
-        setJobs(prev => prev.map(j => j.job_id === jobId ? { ...j, status: data.status } : j))
-        if (data.status === 'finished') {
+        const status = data.status
+        setJobs(prev => prev.map(j => j.job_id === jobId ? { ...j, status } : j))
+
+        if (status === 'finished') {
           clearInterval(iv)
           addToast(`✅ "${name}" indexed successfully! You can now chat about it.`, 'success')
           setDocs(prev => [...prev, { name, collection, pages: data.result?.pages || '?' }])
-        } else if (data.status === 'failed') {
+          // Remove from jobs list after 3s
+          setTimeout(() => setJobs(prev => prev.filter(j => j.job_id !== jobId)), 3000)
+        } else if (status === 'failed') {
           clearInterval(iv)
-          const errorMsg = data.error ? `: ${data.error}` : ''
+          const errorMsg = data.error ? ` — ${data.error}` : ''
           addToast(`❌ Indexing failed for "${name}"${errorMsg}`, 'error')
         }
-      } catch { clearInterval(iv) }
+      } catch {
+        // Network blip — keep polling
+      }
     }, 2500)
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop, accept: { 'application/pdf': ['.pdf'] }, maxFiles: 1,
+    onDrop,
+    accept: { 'application/pdf': ['.pdf'] },
+    maxFiles: 1,
+    maxSize: 50 * 1024 * 1024, // 50 MB
   })
 
   const statusClass = (s) => {
     if (s === 'finished') return 'badge-finished'
-    if (s === 'failed')   return 'badge-failed'
+    if (s === 'failed' || s === 'timeout') return 'badge-failed'
     if (s === 'started' || s === 'deferred') return 'badge-started'
     return 'badge-queued'
+  }
+
+  const statusLabel = (s) => {
+    if (s === 'timeout') return 'timeout'
+    if (s === 'queued') return 'queued'
+    if (s === 'started') return 'indexing'
+    if (s === 'deferred') return 'waiting'
+    if (s === 'finished') return 'done'
+    if (s === 'failed') return 'failed'
+    return s
   }
 
   return (
@@ -87,13 +140,13 @@ export default function DocumentPanel({ collection, addToast }) {
                 <div className="doc-card-info">
                   <div className="doc-card-name">{j.name}</div>
                   <div className="doc-card-meta">Job: {j.job_id.slice(0, 16)}…</div>
-                  {j.status !== 'finished' && j.status !== 'failed' && (
+                  {j.status !== 'finished' && j.status !== 'failed' && j.status !== 'timeout' && (
                     <div className="progress-bar" style={{ marginTop: 6 }}>
-                      <div className="progress-fill" style={{ width: '60%' }} />
+                      <div className="progress-fill progress-indeterminate" />
                     </div>
                   )}
                 </div>
-                <span className={`badge ${statusClass(j.status)}`}>{j.status}</span>
+                <span className={`badge ${statusClass(j.status)}`}>{statusLabel(j.status)}</span>
               </div>
             ))}
           </div>
@@ -109,7 +162,7 @@ export default function DocumentPanel({ collection, addToast }) {
                 <span className="doc-card-icon">📄</span>
                 <div className="doc-card-info">
                   <div className="doc-card-name">{d.name}</div>
-                  <div className="doc-card-meta">{d.pages} pages · {d.collection}</div>
+                  <div className="doc-card-meta">{d.pages !== '?' ? `${d.pages} pages · ` : ''}{d.collection}</div>
                 </div>
                 <span className="badge badge-finished">ready</span>
               </div>

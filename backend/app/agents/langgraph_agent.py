@@ -11,8 +11,6 @@ from typing import Annotated, Literal, Optional
 from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.checkpoint.mongodb import MongoDBSaver
 
 from app.config import get_settings
 
@@ -27,17 +25,33 @@ class ConversationState(TypedDict):
     complexity: Optional[str]
 
 
-# ── LLM clients ───────────────────────────────────────────────────────────────
-_llm_flash = ChatGoogleGenerativeAI(
-    model=settings.gemini_model_flash,
-    google_api_key=settings.gemini_api_key,
-    temperature=0.1,
-)
-_llm_pro = ChatGoogleGenerativeAI(
-    model=settings.gemini_model_pro,
-    google_api_key=settings.gemini_api_key,
-    temperature=0.3,
-)
+# ── Lazy LLM clients ──────────────────────────────────────────────────────────
+_llm_flash = None
+_llm_pro = None
+
+
+def _get_llm_flash():
+    global _llm_flash
+    if _llm_flash is None:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        _llm_flash = ChatGoogleGenerativeAI(
+            model=settings.gemini_model_flash,
+            google_api_key=settings.gemini_api_key,
+            temperature=0.1,
+        )
+    return _llm_flash
+
+
+def _get_llm_pro():
+    global _llm_pro
+    if _llm_pro is None:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        _llm_pro = ChatGoogleGenerativeAI(
+            model=settings.gemini_model_pro,
+            google_api_key=settings.gemini_api_key,
+            temperature=0.3,
+        )
+    return _llm_pro
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
@@ -51,12 +65,12 @@ def _route_by_complexity(state: ConversationState) -> Literal["fast_chat", "deta
 
 
 def fast_chat_node(state: ConversationState) -> dict:
-    response = _llm_flash.invoke(state["messages"])
+    response = _get_llm_flash().invoke(state["messages"])
     return {"messages": [response], "complexity": "simple"}
 
 
 def detailed_chat_node(state: ConversationState) -> dict:
-    response = _llm_pro.invoke(state["messages"])
+    response = _get_llm_pro().invoke(state["messages"])
     return {"messages": [response], "complexity": "complex"}
 
 
@@ -76,8 +90,13 @@ class LangGraphAgent:
     """Stateful chat agent with MongoDB-persisted conversation threads."""
 
     def __init__(self):
-        # Fallback stateless graph (no checkpointer)
-        self._stateless = _build_graph()
+        # Graph will be compiled on first use
+        self._stateless = None
+
+    def _get_stateless(self):
+        if self._stateless is None:
+            self._stateless = _build_graph()
+        return self._stateless
 
     def chat(self, message: str, user_id: str, session_id: str) -> str:
         thread_id = f"{user_id}:{session_id}"
@@ -88,11 +107,12 @@ class LangGraphAgent:
             "complexity": None,
         }
         try:
+            from langgraph.checkpoint.mongodb import MongoDBSaver
             with MongoDBSaver.from_conn_string(settings.mongodb_uri) as checkpointer:
                 graph = _build_graph(checkpointer=checkpointer)
                 result = graph.invoke(input_state, config=config)
                 return result["messages"][-1].content
         except Exception as e:
             logger.warning("MongoDB checkpointer unavailable (%s). Falling back to stateless.", e)
-            result = self._stateless.invoke(input_state)
+            result = self._get_stateless().invoke(input_state)
             return result["messages"][-1].content

@@ -18,7 +18,7 @@ SYSTEM_PROMPT_TEMPLATE = """You are DocuMind AI, an expert document intelligence
 You solve user queries step by step using the START → PLAN → TOOL → OBSERVE → OUTPUT workflow.
 
 CRITICAL RULES:
-- Always respond with a single JSON object (never a list).
+- Always respond with a single JSON object (never a list, never plain text).
 - Only one step per response. Wait for the next instruction.
 - When asked about documents, ALWAYS use _search_documents first.
 - ALL tool inputs that need JSON must be valid JSON strings.
@@ -27,8 +27,8 @@ Output JSON format:
 {{
   "step": "START" | "PLAN" | "TOOL" | "OBSERVE" | "OUTPUT",
   "content": "string",
-  "tool": "tool_name (only for TOOL step)",
-  "input": "tool input (only for TOOL step)"
+  "tool": "tool_name (only for TOOL step, otherwise omit)",
+  "input": "tool input (only for TOOL step, otherwise omit)"
 }}
 
 Available tools:
@@ -42,6 +42,7 @@ class ReactAgent:
     """
     ReAct agent loop. Supports multiple LLMs (Gemini, OpenAI, DeepSeek).
     Tools can be overridden at construction time.
+    Uses json_object mode + manual parsing for universal compatibility.
     """
 
     def __init__(self, model_id: str = "gemini", tool_overrides: Optional[Dict[str, Callable]] = None):
@@ -49,7 +50,6 @@ class ReactAgent:
         self.tools = {**BASE_TOOL_REGISTRY}
         if tool_overrides:
             self.tools.update(tool_overrides)
-        
         self._setup_client()
 
     def _setup_client(self):
@@ -63,12 +63,39 @@ class ReactAgent:
                 base_url="https://api.deepseek.com",
             )
             self.model_name = "deepseek-chat"
-        else:  # Default: Gemini
+        else:  # Default: Gemini via OpenAI-compatible endpoint
             self.client = OpenAI(
                 api_key=settings.gemini_api_key,
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             )
             self.model_name = settings.gemini_model_flash
+
+    def _call_llm(self, messages: List[dict]) -> AgentStep:
+        """
+        Call the LLM with json_object response format and parse the result.
+        This approach works with Gemini, OpenAI, and DeepSeek uniformly.
+        """
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
+            response_format={"type": "json_object"},
+            max_tokens=1024,
+            temperature=0.2,
+        )
+        raw = response.choices[0].message.content
+        if not raw:
+            raise ValueError("LLM returned empty response.")
+        try:
+            parsed_dict = json.loads(raw)
+        except json.JSONDecodeError as e:
+            # Attempt to extract JSON from markdown code block
+            import re
+            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+            if match:
+                parsed_dict = json.loads(match.group(1))
+            else:
+                raise ValueError(f"LLM returned invalid JSON: {e}\nRaw: {raw[:200]}")
+        return raw, AgentStep(**parsed_dict)
 
     def run(
         self,
@@ -94,37 +121,19 @@ class ReactAgent:
 
         for iteration in range(max_iterations):
             try:
-                # DeepSeek and older models might not support .parse() with Pydantic schemas yet
-                # For compatibility, we'll use a standard chat completion and parse JSON manually if needed
-                # However, Gemini/OpenAI support .parse(). DeepSeek doesn't support structured output via SDK yet.
-                
-                if self.model_id == "deepseek":
-                    response = self.client.chat.completions.create(
-                        model=self.model_name,
-                        messages=messages,
-                        response_format={"type": "json_object"},
-                    )
-                    raw = response.choices[0].message.content
-                    parsed_dict = json.loads(raw)
-                    parsed = AgentStep(**parsed_dict)
-                else:
-                    response = self.client.chat.completions.parse(
-                        model=self.model_name,
-                        response_format=AgentStep,
-                        messages=messages,
-                    )
-                    raw = response.choices[0].message.content
-                    parsed = response.choices[0].message.parsed
-
+                raw, parsed = self._call_llm(messages)
                 messages.append({"role": "assistant", "content": raw})
 
                 step = parsed.step
                 step_data: dict = {"step": step, "content": parsed.content}
-                logger.info("Agent [%s] (%s) iter=%d: %s", step, self.model_id, iteration + 1, str(parsed.content)[:80])
+                logger.info(
+                    "Agent [%s] (%s) iter=%d: %s",
+                    step, self.model_id, iteration + 1, str(parsed.content)[:80],
+                )
 
                 if step in ("START", "PLAN", "OBSERVE"):
                     steps.append(step_data)
-                    messages.append({"role": "user", "content": "Proceed."})
+                    messages.append({"role": "user", "content": "Proceed to the next step."})
 
                 elif step == "TOOL":
                     tool_name = parsed.tool or ""
@@ -132,34 +141,40 @@ class ReactAgent:
                     step_data.update({"tool": tool_name, "input": tool_input})
 
                     if tool_name in self.tools:
-                        tool_result = self.tools[tool_name](tool_input)
+                        try:
+                            tool_result = self.tools[tool_name](tool_input)
+                        except Exception as te:
+                            tool_result = f"Tool '{tool_name}' raised an error: {te}"
                     else:
-                        tool_result = f"Error: tool '{tool_name}' not found."
+                        tool_result = f"Error: tool '{tool_name}' not found. Available: {list(self.tools.keys())}"
 
-                    step_data["result"] = tool_result[:600]
+                    step_data["result"] = str(tool_result)[:600]
                     steps.append(step_data)
 
-                    observe = json.dumps({
+                    observe_msg = json.dumps({
                         "step": "OBSERVE",
                         "tool": tool_name,
                         "input": tool_input,
-                        "output": tool_result,
+                        "output": str(tool_result)[:1000],
                     })
-                    messages.append({"role": "user", "content": observe})
+                    messages.append({"role": "user", "content": observe_msg})
 
                 elif step == "OUTPUT":
                     steps.append(step_data)
-                    return {"answer": parsed.content, "steps": steps}
+                    return {"answer": parsed.content or "No answer generated.", "steps": steps}
 
                 else:
                     logger.warning("Unknown step '%s', stopping.", step)
                     break
 
             except Exception as e:
-                logger.error("Agent error at iteration %d: %s", iteration + 1, e)
-                return {"answer": f"I encountered an error while reasoning: {e}", "steps": steps}
+                logger.error("Agent error at iteration %d: %s", iteration + 1, e, exc_info=True)
+                return {
+                    "answer": f"I encountered an error while reasoning: {e}",
+                    "steps": steps,
+                }
 
         return {
-            "answer": "I reached the maximum reasoning steps without a final answer.",
+            "answer": "I reached the maximum reasoning steps. Please try a simpler query.",
             "steps": steps,
         }
