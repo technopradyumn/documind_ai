@@ -19,6 +19,18 @@ export default function DocumentPanel({ collection, addToast }) {
       .catch(() => {/* non-fatal */})
   }, [])
 
+  const handleDelete = async (filename) => {
+    if (!window.confirm(`Are you sure you want to delete "${filename}"?`)) return
+    try {
+      const { deleteDocument } = await import('../api/client')
+      await deleteDocument(filename, collection)
+      setDocs(prev => prev.filter(d => d.name !== filename))
+      addToast(`🗑️ "${filename}" deleted.`, 'success')
+    } catch (e) {
+      addToast('Failed to delete document.', 'error')
+    }
+  }
+
   const onDrop = useCallback(async (accepted, rejected) => {
     if (rejected?.length) {
       addToast('Only PDF files are supported. Please upload a .pdf file.', 'error')
@@ -164,7 +176,17 @@ export default function DocumentPanel({ collection, addToast }) {
                   <div className="doc-card-name">{d.name}</div>
                   <div className="doc-card-meta">{d.pages !== '?' ? `${d.pages} pages · ` : ''}{d.collection}</div>
                 </div>
-                <span className="badge badge-finished">ready</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span className="badge badge-finished">ready</span>
+                  <button 
+                    className="btn-icon" 
+                    onClick={() => handleDelete(d.name)}
+                    style={{ width: 28, height: 28, fontSize: 14, background: 'rgba(239,68,68,0.1)', color: 'var(--danger)' }}
+                    title="Delete Document"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             ))}
           </div>

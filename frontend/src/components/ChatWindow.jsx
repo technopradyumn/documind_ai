@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import ThinkingSteps from './ThinkingSteps'
 import VoiceButton from './VoiceButton'
-import { sendChat } from '../api/client'
+import { sendChat, uploadDocument, getJobStatus } from '../api/client'
 
 export default function ChatWindow({ collection, userId, addToast, onUploadClick }) {
   const [messages, setMessages] = useState([])
@@ -36,7 +36,7 @@ export default function ChatWindow({ collection, userId, addToast, onUploadClick
       const { data } = await sendChat({
         message: text,
         user_id: userId,
-        session_id: 'session-1',
+        session_id: collection,
         collection,
         model, // Send the selected model
       })
@@ -50,6 +50,89 @@ export default function ChatWindow({ collection, userId, addToast, onUploadClick
       addToast('Chat error: ' + (e.response?.data?.detail || e.message), 'error')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const inputRef = useRef(null)
+  const [uploading, setUploading] = useState(false)
+
+  const [sessionDocs, setSessionDocs] = useState([])
+
+  const fetchSessionDocs = async () => {
+    try {
+      const { listDocuments } = await import('../api/client')
+      const { data } = await listDocuments(collection)
+      setSessionDocs(data.documents || [])
+    } catch (e) { /* silent */ }
+  }
+
+  useEffect(() => {
+    fetchSessionDocs()
+  }, [collection])
+
+  const handleDeleteDoc = async (filename) => {
+    if (!window.confirm(`Remove "${filename}" from this session?`)) return
+    try {
+      const { deleteDocument } = await import('../api/client')
+      await deleteDocument(filename, collection)
+      setSessionDocs(prev => prev.filter(d => d !== filename))
+      addToast(`🗑️ "${filename}" removed.`, 'success')
+    } catch (e) {
+      addToast('Failed to remove document.', 'error')
+    }
+  }
+
+  const pollJob = (jobId, name) => {
+    let attempts = 0
+    const iv = setInterval(async () => {
+      attempts++
+      if (attempts > 120) {
+        clearInterval(iv)
+        addToast(`⚠️ Indexing "${name}" is taking too long.`, 'info')
+        return
+      }
+      try {
+        const { data } = await getJobStatus(jobId)
+        if (data.status === 'finished') {
+          clearInterval(iv)
+          addToast(`✅ "${name}" indexed successfully!`, 'success')
+          fetchSessionDocs() // Refresh list
+        } else if (data.status === 'failed') {
+          clearInterval(iv)
+          addToast(`❌ Indexing failed for "${name}": ${data.error || 'Unknown error'}`, 'error')
+        }
+      } catch (e) { /* silent */ }
+    }, 2500)
+  }
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      addToast('Only PDF files are supported.', 'error')
+      return
+    }
+
+    setUploading(true)
+    const form = new FormData()
+    form.append('file', file)
+    form.append('collection', collection)
+    form.append('user_id', userId)
+
+    try {
+      const { data } = await uploadDocument(form)
+      if (data.job_id === 'sync-done') {
+        addToast(`✅ "${file.name}" indexed!`, 'success')
+        fetchSessionDocs()
+      } else {
+        addToast(`📄 "${file.name}" uploaded. Indexing…`, 'success')
+        pollJob(data.job_id, file.name)
+      }
+    } catch (err) {
+      addToast(`Upload failed: ${err.response?.data?.detail || err.message}`, 'error')
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ''
     }
   }
 
@@ -67,6 +150,19 @@ export default function ChatWindow({ collection, userId, addToast, onUploadClick
   return (
     <>
       <div className="chat-area">
+        {/* Session Document Header */}
+        {sessionDocs.length > 0 && (
+          <div className="session-docs-bar">
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>SESSION CONTENT:</span>
+            {sessionDocs.map(doc => (
+              <div key={doc} className="session-doc-tag">
+                <span>{doc.split('_').slice(1).join('_') || doc}</span>
+                <button onClick={() => handleDeleteDoc(doc)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {messages.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">🤖</div>
@@ -119,12 +215,20 @@ export default function ChatWindow({ collection, userId, addToast, onUploadClick
         </div>
         
         <div className="input-row">
+          <input 
+            type="file" 
+            ref={inputRef} 
+            style={{ display: 'none' }} 
+            accept=".pdf" 
+            onChange={handleFileUpload} 
+          />
           <button 
-            className="btn-icon btn-upload-quick" 
-            onClick={onUploadClick}
+            className={`btn-icon btn-upload-quick ${uploading ? 'uploading' : ''}`} 
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
             title="Upload Document"
           >
-            📂
+            {uploading ? '⏳' : '📂'}
           </button>
           <textarea
             ref={textareaRef}

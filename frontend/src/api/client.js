@@ -24,6 +24,11 @@ export const uploadDocument = (formData, onProgress) =>
   })
 
 export const listDocuments = () => api.get('/documents/list')
+export const deleteDocument = (filename, collection) => api.delete(`/documents/${filename}`, { params: { collection } })
+export const clearCollection = (collection) => api.delete(`/documents/clear/${collection}`)
+export const getSessions     = (userId) => api.get(`/sessions/${userId}`)
+export const saveSession    = (data) => api.post('/sessions', data)
+export const deleteSession  = (sessionId) => api.delete(`/sessions/${sessionId}`)
 export const getJobStatus  = (jobId) => api.get(`/jobs/${jobId}`)
 export const getHealth     = () => api.get('/health')
 export const getVoiceStatus = () => api.get('/voice/status')

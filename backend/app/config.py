@@ -31,11 +31,11 @@ class Settings(BaseSettings):
     neo4j_username: str = ""
     neo4j_password: str = ""
 
-    # Models — use real, stable Gemini model identifiers
-    gemini_model_flash: str = "gemini-2.0-flash"
-    gemini_model_pro: str = "gemini-2.0-flash"
+    # Models
+    gemini_model_flash: str = "gemini-3.1-flash-lite-preview"
+    gemini_model_pro: str = "gemini-3.1-flash-lite-preview"
     # Embedding: models/text-embedding-004 is the stable GA endpoint
-    gemini_embedding_model: str = "models/text-embedding-004"
+    gemini_embedding_model: str = "models/gemini-embedding-2"
 
     # App
     qdrant_collection: str = "documind"

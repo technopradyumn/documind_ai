@@ -3,7 +3,17 @@ import Sidebar from './components/Sidebar'
 import ChatWindow from './components/ChatWindow'
 import DocumentPanel from './components/DocumentPanel'
 
-const USER_ID = `user_${Math.random().toString(36).slice(2, 9)}`
+const getUserId = () => {
+  let id = localStorage.getItem('documind_user_id')
+  if (!id) {
+    id = `user_${Math.random().toString(36).slice(2, 9)}`
+    localStorage.setItem('documind_user_id', id)
+  }
+  return id
+}
+const USER_ID = getUserId()
+
+const genSessionId = () => `chat_${Math.random().toString(36).slice(2, 9)}`
 
 function Toast({ msg, type, onClose }) {
   useEffect(() => {
@@ -15,8 +25,21 @@ function Toast({ msg, type, onClose }) {
 
 export default function App() {
   const [tab, setTab]             = useState('chat')
-  const [collection, setCollection] = useState('documind')
+  const [collection, setCollection] = useState(genSessionId())
   const [toasts, setToasts]       = useState([])
+  const [sessions, setSessions]   = useState([])
+
+  const fetchSessions = async () => {
+    try {
+      const { getSessions } = await import('./api/client')
+      const { data } = await getSessions(USER_ID)
+      setSessions(data.sessions || [])
+    } catch (e) { console.error(e) }
+  }
+
+  useEffect(() => {
+    fetchSessions()
+  }, [])
 
   const addToast = (msg, type = 'info') => {
     const id = Date.now()
@@ -24,9 +47,40 @@ export default function App() {
   }
   const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id))
 
+  const handleNewChat = () => {
+    setCollection(genSessionId())
+    setTab('chat')
+  }
+
+  const handleSwitchSession = (sid) => {
+    setCollection(sid)
+    setTab('chat')
+  }
+
+  const handleClearChat = async () => {
+    if (!window.confirm('Clear all messages and delete uploaded documents for this session?')) return
+    try {
+      const { clearCollection, deleteSession } = await import('./api/client')
+      await clearCollection(collection)
+      await deleteSession(collection)
+      addToast('Session cleared and documents deleted.', 'success')
+      fetchSessions()
+      handleNewChat()
+    } catch (e) {
+      addToast('Failed to clear session.', 'error')
+    }
+  }
+
   return (
     <div className="app">
-      <Sidebar collection={collection} setCollection={setCollection} userId={USER_ID} />
+      <Sidebar 
+        collection={collection} 
+        userId={USER_ID} 
+        sessions={sessions}
+        onNewChat={handleNewChat}
+        onSwitchSession={handleSwitchSession}
+        onClearChat={handleClearChat}
+      />
 
       <main className="main">
         {/* Top bar */}

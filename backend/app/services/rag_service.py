@@ -106,6 +106,45 @@ class RagService:
 
         return "\n\n---\n\n".join(parts)
 
+    def delete_collection(self, collection_name: str) -> bool:
+        """Delete an entire collection from Qdrant."""
+        from qdrant_client import QdrantClient
+        from app.config import get_settings
+        settings = get_settings()
+        try:
+            client = QdrantClient(url=settings.qdrant_url)
+            client.delete_collection(collection_name=collection_name)
+            logger.info("Deleted collection: %s", collection_name)
+            return True
+        except Exception as e:
+            logger.error("Failed to delete collection %s: %s", collection_name, e)
+            return False
+
+    def delete_document(self, file_path: str, collection_name: str) -> bool:
+        """Delete points associated with a specific file from a collection."""
+        from qdrant_client import QdrantClient, models
+        from app.config import get_settings
+        settings = get_settings()
+        try:
+            client = QdrantClient(url=settings.qdrant_url)
+            # Match by metadata 'source' which is stored in index_pdf
+            client.delete(
+                collection_name=collection_name,
+                points_selector=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="metadata.source",
+                            match=models.MatchValue(value=str(file_path)),
+                        )
+                    ]
+                ),
+            )
+            logger.info("Deleted document points for '%s' from '%s'", file_path, collection_name)
+            return True
+        except Exception as e:
+            logger.error("Failed to delete document %s: %s", file_path, e)
+            return False
+
     def make_search_tool(self, collection_name: str) -> Callable[[str], str]:
         """Return a tool function pre-bound to a Qdrant collection."""
         def _search(query: str) -> str:

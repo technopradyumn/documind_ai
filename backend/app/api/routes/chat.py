@@ -49,6 +49,15 @@ async def chat(request: ChatRequest):
             ai_response=answer,
         )
 
+        # 5. Update session metadata (async update)
+        try:
+            from app.services.session_service import session_service
+            # Update title only if it's the first message or keep it updated
+            # For now, we'll just update the timestamp and use first 40 chars as title
+            title = request.message[:40] + ("..." if len(request.message) > 40 else "")
+            session_service.save_session(request.session_id, request.user_id, title)
+        except: pass
+
         return ChatResponse(
             message=answer,
             steps=steps,
