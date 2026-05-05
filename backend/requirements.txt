@@ -30,6 +30,7 @@ rq>=1.16.0
 # Uncomment if pyaudio installs successfully on your system:
 # pyaudio>=0.2.14
 SpeechRecognition>=3.10.0
+pydub>=0.25.1
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 requests>=2.31.0

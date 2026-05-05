@@ -30,24 +30,31 @@ class RagService:
 
     def index_pdf(self, file_path: str, collection_name: str) -> dict:
         """Load → chunk → embed → store in Qdrant. Called by the RQ worker."""
-        logger.info("Indexing '%s' → collection '%s'", file_path, collection_name)
-        loader = PyPDFLoader(file_path=file_path)
-        docs = loader.load()
-        chunks = self._splitter.split_documents(docs)
-        logger.info("%d pages → %d chunks", len(docs), len(chunks))
+        try:
+            logger.info("Indexing '%s' → collection '%s'", file_path, collection_name)
+            loader = PyPDFLoader(file_path=file_path)
+            docs = loader.load()
+            if not docs:
+                raise ValueError(f"No pages could be loaded from {file_path}. Is it a valid PDF?")
+            
+            chunks = self._splitter.split_documents(docs)
+            logger.info("%d pages → %d chunks", len(docs), len(chunks))
 
-        QdrantVectorStore.from_documents(
-            documents=chunks,
-            embedding=self._embeddings,
-            url=settings.qdrant_url,
-            collection_name=collection_name,
-        )
-        return {
-            "status": "success",
-            "pages": len(docs),
-            "chunks": len(chunks),
-            "collection": collection_name,
-        }
+            QdrantVectorStore.from_documents(
+                documents=chunks,
+                embedding=self._embeddings,
+                url=settings.qdrant_url,
+                collection_name=collection_name,
+            )
+            return {
+                "status": "success",
+                "pages": len(docs),
+                "chunks": len(chunks),
+                "collection": collection_name,
+            }
+        except Exception as e:
+            logger.error("Indexing failed for '%s': %s", file_path, e, exc_info=True)
+            raise RuntimeError(f"Indexing failed: {e}")
 
     def search(self, query: str, collection_name: str, top_k: int = 5) -> str:
         """Retrieve relevant chunks from Qdrant and format for LLM context."""

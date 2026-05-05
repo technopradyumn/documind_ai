@@ -393,39 +393,66 @@ body {
 
 /* ── Input bar ───────────────────────────────────────────────────────────── */
 .input-bar {
-  padding: 16px 24px 20px;
+  padding: 16px;
+  background: var(--bg-card);
   border-top: 1px solid var(--border);
-  background: rgba(17,24,39,0.9);
-  backdrop-filter: blur(12px);
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.model-selector-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.model-select {
+  background: var(--bg-sidebar);
+  color: var(--text-main);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  outline: none;
+  cursor: pointer;
 }
 
 .input-row {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-end;
+}
+
+.btn-upload-quick {
+  background: transparent;
+  font-size: 1.2rem;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: none;
 }
 
 .input-field {
   flex: 1;
-  background: var(--bg-elevated);
+  background: var(--bg-sidebar);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 12px 18px;
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  font-size: 0.9rem;
+  color: var(--text-main);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.95rem;
   resize: none;
-  outline: none;
-  max-height: 140px;
-  min-height: 46px;
-  line-height: 1.5;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  max-height: 200px;
+  transition: border-color 0.2s;
+  font-family: inherit;
 }
+
 .input-field:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  outline: none;
 }
+
 .input-field::placeholder { color: var(--text-muted); }
 
 .btn-icon {
@@ -569,3 +596,22 @@ body {
 @keyframes toastIn { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
 .toast.success { border-color: var(--success); }
 .toast.error   { border-color: var(--danger); }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .app { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px;
+  }
+  .main { flex: 1; }
+  .topbar { padding: 12px 16px; }
+  .topbar-title { font-size: 1.1rem; }
+  .chat-area { padding: 12px; }
+  .message { max-width: 95%; }
+  .input-bar { padding: 12px; }
+  .input-row { gap: 8px; }
+}

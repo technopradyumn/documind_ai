@@ -45,16 +45,38 @@ class VoiceService:
     def speech_to_text(self, audio_bytes: bytes) -> str:
         if not self._stt_ok:
             raise RuntimeError("STT not available. Install speech_recognition.")
+        
         sr = self._sr
         recognizer = sr.Recognizer()
+        
         try:
-            with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            from pydub import AudioSegment
+            # Load audio (any format supported by ffmpeg) and export as WAV
+            audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+            wav_io = io.BytesIO()
+            audio_segment.export(wav_io, format="wav")
+            wav_io.seek(0)
+            
+            with sr.AudioFile(wav_io) as source:
                 audio_data = recognizer.record(source)
             return recognizer.recognize_google(audio_data)
-        except sr.UnknownValueError:
-            raise ValueError("Could not understand audio. Please speak clearly.")
-        except sr.RequestError as e:
-            raise RuntimeError(f"Google STT error: {e}")
+        except ImportError:
+            # Fallback if pydub/ffmpeg missing
+            try:
+                with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+                    audio_data = recognizer.record(source)
+                return recognizer.recognize_google(audio_data)
+            except sr.UnknownValueError:
+                raise ValueError("Could not understand audio. Please speak clearly.")
+        except Exception as e:
+            logger.error("STT Conversion error: %s", e)
+            # Try original bytes as fallback
+            try:
+                with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+                    audio_data = recognizer.record(source)
+                return recognizer.recognize_google(audio_data)
+            except Exception:
+                raise ValueError(f"Transcription failed. Ensure audio is clear and format is supported. ({e})")
 
     # ── TTS ───────────────────────────────────────────────────────────────────
     def text_to_speech(self, text: str, voice: str = "nova") -> bytes:

@@ -32,7 +32,7 @@ async def chat(request: ChatRequest):
 
         # 2. Inject a RAG tool for the selected document collection
         search_tool = rag_service.make_search_tool(request.collection)
-        agent = ReactAgent(tool_overrides={"_search_documents": search_tool})
+        agent = ReactAgent(model_id=request.model, tool_overrides={"_search_documents": search_tool})
 
         # 3. Run agent
         result = agent.run(

@@ -48,7 +48,7 @@ export default function App() {
         </div>
 
         {tab === 'chat' ? (
-          <ChatWindow collection={collection} userId={USER_ID} addToast={addToast} />
+          <ChatWindow collection={collection} userId={USER_ID} addToast={addToast} onUploadClick={() => setTab('docs')} />
         ) : (
           <DocumentPanel collection={collection} addToast={addToast} />
         )}

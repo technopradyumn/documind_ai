@@ -4,20 +4,26 @@ import ThinkingSteps from './ThinkingSteps'
 import VoiceButton from './VoiceButton'
 import { sendChat } from '../api/client'
 
-export default function ChatWindow({ collection, userId, addToast }) {
+export default function ChatWindow({ collection, userId, addToast, onUploadClick }) {
   const [messages, setMessages] = useState([])
   const [input, setInput]   = useState('')
   const [loading, setLoading] = useState(false)
+  const [model, setModel]     = useState('gemini') // Default model
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
+
+  const models = [
+    { id: 'gemini',   name: 'Gemini 3.1 Flash Lite', icon: '✦' },
+    { id: 'openai',   name: 'GPT-4o',              icon: '🤖' },
+    { id: 'deepseek', name: 'DeepSeek Chat',        icon: '🐋' },
+  ]
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   const suggestions = [
     'Summarize the uploaded document',
     'What are the key findings?',
-    'List all important dates mentioned',
-    'Explain the main concepts in simple terms',
+    'Explain the main concepts',
   ]
 
   const send = async (msg) => {
@@ -32,6 +38,7 @@ export default function ChatWindow({ collection, userId, addToast }) {
         user_id: userId,
         session_id: 'session-1',
         collection,
+        model, // Send the selected model
       })
       setMessages(prev => [...prev, {
         role: 'ai',
@@ -64,7 +71,7 @@ export default function ChatWindow({ collection, userId, addToast }) {
           <div className="empty-state">
             <div className="empty-icon">🤖</div>
             <h2>DocuMind AI is ready</h2>
-            <p>Upload a PDF in the Documents tab, then ask anything about it. I'll reason step-by-step to find your answer.</p>
+            <p>Select a model and start chatting. If you have documents, upload them to chat about their content.</p>
             <div className="suggestion-chips">
               {suggestions.map(s => (
                 <button key={s} className="chip" onClick={() => send(s)}>{s}</button>
@@ -99,11 +106,30 @@ export default function ChatWindow({ collection, userId, addToast }) {
       </div>
 
       <div className="input-bar">
+        <div className="model-selector-row">
+          <select 
+            className="model-select" 
+            value={model} 
+            onChange={(e) => setModel(e.target.value)}
+          >
+            {models.map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        
         <div className="input-row">
+          <button 
+            className="btn-icon btn-upload-quick" 
+            onClick={onUploadClick}
+            title="Upload Document"
+          >
+            📂
+          </button>
           <textarea
             ref={textareaRef}
             className="input-field"
-            placeholder="Ask anything about your documents… (Enter to send, Shift+Enter for newline)"
+            placeholder="Ask anything..."
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
@@ -119,7 +145,6 @@ export default function ChatWindow({ collection, userId, addToast }) {
             ➤
           </button>
         </div>
-        <p className="input-hint">DocuMind AI uses RAG + ReAct reasoning + persistent memory</p>
       </div>
     </>
   )

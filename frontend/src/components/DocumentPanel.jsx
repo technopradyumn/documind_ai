@@ -39,7 +39,8 @@ export default function DocumentPanel({ collection, addToast }) {
           setDocs(prev => [...prev, { name, collection, pages: data.result?.pages || '?' }])
         } else if (data.status === 'failed') {
           clearInterval(iv)
-          addToast(`❌ Indexing failed for "${name}"`, 'error')
+          const errorMsg = data.error ? `: ${data.error}` : ''
+          addToast(`❌ Indexing failed for "${name}"${errorMsg}`, 'error')
         }
       } catch { clearInterval(iv) }
     }, 2500)

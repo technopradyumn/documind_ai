@@ -14,9 +14,10 @@ class AgentStep(BaseModel):
 # ── Chat ──────────────────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     message: str
-    user_id: str = "default_user"
-    session_id: str = "default_session"
+    user_id: str
+    session_id: str = "session-1"
     collection: str = "documind"
+    model: str = "gemini"  # Options: gemini, openai, deepseek
 
 
 class StepDetail(BaseModel):
